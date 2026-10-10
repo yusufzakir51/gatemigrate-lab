@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Raw GateMigrate native observations; never a semantic or calibration verdict.
+"""Raw GateMigrate native observations v2; never a calibration verdict.
 
 Requires Python 3.9+ and, only for write probing, Git. No third-party packages.
 All Git calls use argument arrays. Credentials and captured Git output are never
-printed or written. The write probe only creates a new run-specific branch in an
-explicitly acknowledged disposable repository and never deletes a branch.
+printed or written. V2 adds bounded diagnostic identifiers, not raw error text,
+after attempted pushes. The write probe only creates a new run-specific branch
+in an explicitly acknowledged disposable repository and never deletes a branch.
 """
 import argparse
 import datetime as dt
@@ -18,6 +19,59 @@ from urllib.parse import unquote, urlsplit
 
 PUBLIC_CANARY = "GateMigrate-public-calibration-canary-v1"
 SCHEMA_VERSION = "gatemigrate.raw-native-observation.v1"
+PROBE_VERSION = "gatemigrate.native-probe.v2"
+
+
+def push_diagnostics(platform, repository, returncode, stderr):
+    """Recognize only exact, English provider message patterns; return constants.
+
+    These are observations of provider text, not a permission/effect verdict.
+    Unknown errors (including a bare HTTP 403), other permissions, local errors,
+    and changed/localized messages deliberately remain unclassified. A matched
+    message still requires independent token/settings and branch readback.
+
+    Sources checked 2026-10-10:
+    - GitHub Docs: /en/authentication/troubleshooting-ssh/
+      error-permission-to-userrepo-denied-to-other-user (message pattern).
+    - https://github.com/orgs/community/discussions/46398 (primary error report
+      for the alternate exact GitHub message, NOT an API format guarantee).
+    - https://github.com/githubnext/ado-aw/blob/main/docs/safe-output-permissions.md
+      (tool-author documentation of TF401027/GenericContribute).
+    - https://learn.microsoft.com/en-us/answers/questions/316908/
+      creating-data-factory-pipeline-from-vso-deployment (primary CreateBranch
+      error report, NOT an API format guarantee).
+    - Microsoft Learn /en-us/azure/devops/pipelines/scripts/git-commands explains
+      Build Service Create branch/Contribute grants; it does not promise strings.
+    """
+    signals = set()
+    if returncode != 0 and isinstance(stderr, str):
+        for line in stderr.splitlines():
+            if platform == "github":
+                if line == "remote: Write access to repository not granted.":
+                    signals.add("GITHUB_WRITE_ACCESS_NOT_GRANTED_TEXT")
+                if (re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository)
+                        and re.fullmatch(
+                            r"remote: Permission to " + re.escape(repository)
+                            + r"(?:\.git)? denied to [A-Za-z0-9_.\[\]-]+\.", line)):
+                    signals.add("GITHUB_REPOSITORY_PERMISSION_DENIED_TEXT")
+            elif platform == "azure":
+                # Some Git receive-pack responses prepend a hexadecimal packet
+                # length to the otherwise identical TF401027 sentence.
+                match = re.fullmatch(
+                    r"remote: (?:[0-9a-f]{1,16})?TF401027: You need the Git "
+                    r"'(GenericContribute|CreateBranch)' permission to perform this action\."
+                    r"(?: ?Details: .*)?", line)
+                if match:
+                    signals.add({
+                        "GenericContribute": "AZURE_TF401027_GENERIC_CONTRIBUTE_TEXT",
+                        "CreateBranch": "AZURE_TF401027_CREATE_BRANCH_TEXT",
+                    }[match.group(1)])
+    return {
+        "parser_version": "gatemigrate.git-diagnostics.v1",
+        "provider_message_signals": sorted(signals),
+        "raw_output_logged": False,
+        "interpretation": "OBSERVATION_ONLY_REQUIRES_INDEPENDENT_CORROBORATION",
+    }
 
 
 def now():
@@ -47,7 +101,7 @@ def context():
 
 
 def observation(args, name, detail):
-    record = dict(schema_version=SCHEMA_VERSION, probe_type=args.probe,
+    record = dict(schema_version=SCHEMA_VERSION, probe_version=PROBE_VERSION, probe_type=args.probe,
                   family=args.family, **context(), observed_utc=now(),
                   scenario_id=getenv("GM_SCENARIO_ID"),
                   settings_snapshot_digest=getenv("GM_SETTINGS_SNAPSHOT_DIGEST"),
@@ -143,6 +197,8 @@ def probe_write(args):
         name = "PUSH_REPORTED_SUCCESS" if pushed.returncode == 0 else "PUSH_INCONCLUSIVE_ERROR"
         return observation(args, name, {"git_returncode": pushed.returncode, "branch_ref": ref,
                            "expected_object_id": sha, "external_effect_verification": "PENDING",
+                           "push_diagnostics": push_diagnostics(ctx["platform"], ctx["resource"],
+                                                                pushed.returncode, pushed.stderr),
                            "meaning": "Independent repository readback and policy evidence are required."})
     except (OSError, subprocess.TimeoutExpired):
         return observation(args, "PUSH_INCONCLUSIVE_ERROR", {
