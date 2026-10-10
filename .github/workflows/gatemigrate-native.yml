@@ -1,0 +1,69 @@
+# Install as .github/workflows/gatemigrate-native.yml in a DISPOSABLE lab repo.
+# Copy native/probe.py to native/probe.py at the repository root.
+# Precreate gm-protected and configure controls before dispatch. This YAML does
+# not create approval rules, deployment branch restrictions, or environment secrets.
+name: GateMigrate native calibration
+"on":
+  workflow_dispatch:
+    inputs:
+      enable_write_probe:
+        description: Attempt creation of one lab branch after all independent guards
+        type: boolean
+        default: false
+        required: true
+permissions:
+  contents: read
+env:
+  GM_PLATFORM: github
+jobs:
+  mapping_control:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/gm-untrusted'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Public positive mapping control
+        run: python3 native/probe.py canary --family synthetic_secret_access --label public-mapping-control
+        env:
+          GM_CANARY_VALUE: GateMigrate-public-calibration-canary-v1
+      - name: Unprotected context availability
+        run: python3 native/probe.py canary --family synthetic_secret_access --label unprotected-context
+        env:
+          GM_CANARY_VALUE: ${{ secrets.GM_SYNTHETIC_CANARY }}
+  protected_probe:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/gm-untrusted'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: gm-protected
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Protected deployment marker
+        run: python3 native/probe.py marker --family deployment_authorization --label protected-deployment
+      - name: Protected work start marker
+        run: python3 native/probe.py marker --family approval_enforcement --label protected-work-start
+      - name: Protected context availability
+        run: python3 native/probe.py canary --family synthetic_secret_access --label protected-context
+        env:
+          GM_CANARY_VALUE: ${{ secrets.GM_SYNTHETIC_CANARY }}
+  repository_write:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/gm-untrusted'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # The default is a read-only candidate. Create a separately versioned positive
+    # control changing ONLY this to contents: write, subject to effective settings.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: true
+      - name: Guarded repository capability probe
+        run: python3 native/probe.py write --family repository_write
+        env:
+          GATEMIGRATE_ENABLE_WRITE_PROBE: ${{ inputs.enable_write_probe }}
+          GM_LAB_REPOSITORY_URL: ${{ vars.GM_LAB_REPOSITORY_URL }}
+          GM_DISPOSABLE_LAB_CONFIRM: ${{ vars.GM_DISPOSABLE_LAB_CONFIRM }}
