@@ -1,20 +1,59 @@
-# GateMigrate Phase 3D prospective marker-only candidate.
-# Install as .github/workflows/gatemigrate-phase3d.yml in the disposable lab repository.
-name: GateMigrate Phase 3D
-"on":
-  workflow_dispatch:
+# Authored Phase4C native calibration candidate; fresh binding required before dispatch.
+name: GateMigrate Phase4C NC01
+'on':
+  workflow_dispatch: null
 permissions:
   contents: read
 env:
   GM_PLATFORM: github
 jobs:
-  protected_work:
+  prior:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    if: false
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        persist-credentials: false
+  plain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: prior
+    if: github.ref == 'refs/heads/gm-phase4c-calibration-20261011'
     environment: gm-phase3d
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          persist-credentials: false
-      - run: python3 native/probe.py marker --family deployment_authorization --label protected-context
-      - run: python3 native/probe.py marker --family approval_enforcement --label protected-context
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        persist-credentials: false
+    - run: python3 native/probe.py marker --family approval_enforcement --label n01-release
+    - run: python3 native/probe.py marker --family approval_enforcement --label n02-plain
+  status_or:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: prior
+    if: success() || github.ref == 'refs/heads/gm-phase4c-calibration-20261011'
+    environment: gm-phase3d
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        persist-credentials: false
+    - run: python3 native/probe.py marker --family approval_enforcement --label n02-status-or
+  negated_status:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs: prior
+    if: ${{ !success() }}
+    environment: gm-phase3d
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        persist-credentials: false
+    - run: python3 native/probe.py marker --family approval_enforcement --label n02-negated-status
+  sibling:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        persist-credentials: false
+    - run: python3 native/probe.py marker --family approval_enforcement --label n03-sibling
